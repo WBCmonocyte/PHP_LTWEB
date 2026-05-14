@@ -1,15 +1,30 @@
 <?php
+// ============================================================================
+// index.php - Trang chủ công khai (KHÔNG cần đăng nhập). Hiển thị các con số
+// thống kê tổng quan đẹp mắt nhằm mục đích "marketing" hệ thống. Người dùng
+// thấy thú vị → đăng nhập để vào dashboard quản trị chi tiết.
+//
+// Logic chính:
+//   * Nếu đã đăng nhập (qua session/cookie): hiện nút "Vào dashboard" và "Đăng xuất"
+//   * Nếu chưa: hiện CTA "Đăng nhập để quản lý"
+//   * Luôn hiển thị các con số thống kê công khai (không lộ chi tiết tiền nong, đơn cụ thể)
+// ============================================================================
+
 session_start();
 
 require_once __DIR__ . "/connect.php";
 require_once __DIR__ . "/auth.php";
 require_once __DIR__ . "/helpers.php";
 
+// Nếu user có cookie remember-me → tự đăng nhập lại. KHÔNG ép buộc đăng nhập
+// (đây là trang công khai), chỉ để có thông tin đẹp ở nav.
 restore_remembered_login($conn);
 
+// Cờ + tên hiển thị ở nav (nếu đã đăng nhập).
 $isLoggedIn = isset($_SESSION["user_id"]);
 $fullName = $_SESSION["full_name"] ?? $_SESSION["username"] ?? "";
 
+// ---- Query 1: Đếm nhà cung cấp ----
 $supplierStats = fetch_one($conn, "
     SELECT
         COUNT(*) AS total_suppliers,
@@ -17,11 +32,13 @@ $supplierStats = fetch_one($conn, "
     FROM suppliers
 ");
 
+// ---- Query 2: Đếm loại vật tư ----
 $materialStats = fetch_one($conn, "
     SELECT COUNT(*) AS total_materials
     FROM materials
 ");
 
+// ---- Query 3: Thống kê đơn hàng theo trạng thái ----
 $orderStats = fetch_one($conn, "
     SELECT
         COUNT(*) AS total_orders,
@@ -31,6 +48,8 @@ $orderStats = fetch_one($conn, "
     FROM purchase_orders
 ");
 
+// ---- Query 4: Tỷ lệ đơn giao đúng hạn toàn hệ thống ----
+// Bảo vệ chia cho 0 bằng CASE — nếu chưa có đơn Completed nào, trả về 0%.
 $onTimeStats = fetch_one($conn, "
     SELECT
         CASE
@@ -44,6 +63,9 @@ $onTimeStats = fetch_one($conn, "
     FROM purchase_orders
 ");
 
+// ---- Query 5: Top 5 NCC có nhiều đơn hoàn thành nhất ----
+// HAVING completed_orders > 0: chỉ tính NCC đã từng có ít nhất 1 đơn hoàn thành
+// (loại NCC chưa hoạt động ra khỏi top).
 $topSuppliers = fetch_all($conn, "
     SELECT
         s.supplier_name,
@@ -58,6 +80,9 @@ $topSuppliers = fetch_all($conn, "
     LIMIT 5
 ");
 
+// ---- Query 6: Top 5 vật tư phổ biến (đặt nhiều SL nhất) ----
+// LEFT JOIN order_details để bao gồm cả vật tư chưa từng đặt (sẽ có SL = 0).
+// COUNT(DISTINCT order_id): mỗi vật tư xuất hiện trong bao nhiêu đơn khác nhau.
 $popularMaterials = fetch_all($conn, "
     SELECT
         m.material_name,
@@ -71,10 +96,15 @@ $popularMaterials = fetch_all($conn, "
     LIMIT 5
 ");
 
+// ---- Tính tỷ lệ % cho thanh progress bar ----
+// Ép (int) để chắc chắn kiểu số. ?? 0 phòng query lỗi.
 $totalOrders = (int) ($orderStats["total_orders"] ?? 0);
 $completedOrders = (int) ($orderStats["completed_orders"] ?? 0);
 $pendingOrders = (int) ($orderStats["pending_orders"] ?? 0);
 $cancelledOrders = (int) ($orderStats["cancelled_orders"] ?? 0);
+
+// Tính tỷ lệ %. Nếu totalOrders = 0 thì gán 0 để tránh chia cho 0.
+// round(..., 1) làm tròn 1 chữ số thập phân, ví dụ 33.33333 → 33.3.
 $completedRate = $totalOrders > 0 ? round($completedOrders / $totalOrders * 100, 1) : 0;
 $pendingRate = $totalOrders > 0 ? round($pendingOrders / $totalOrders * 100, 1) : 0;
 $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100, 1) : 0;
@@ -464,7 +494,12 @@ $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100,
             Quản lý nhà cung cấp
         </a>
         <div class="nav-actions">
-            <?php if ($isLoggedIn): ?>
+            <?php
+            // Nav khác nhau tùy trạng thái đăng nhập:
+            //   - Đã đăng nhập: lời chào + link dashboard + đăng xuất
+            //   - Chưa: nút đăng nhập
+            if ($isLoggedIn):
+            ?>
                 <span style="color: var(--muted); font-size: 14px;">Xin chào, <strong><?php echo e($fullName); ?></strong></span>
                 <a class="btn btn-primary" href="dashboard.php">Vào dashboard</a>
                 <a class="btn btn-outline" href="logout.php">Đăng xuất</a>
@@ -478,6 +513,7 @@ $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100,
         <h1>Quản lý nhà cung cấp &amp; đơn mua thông minh</h1>
         <p>Theo dõi nhà cung cấp, vật tư và tiến độ giao hàng theo thời gian thực. Dữ liệu thống kê cơ bản được công khai bên dưới — đăng nhập để xem chi tiết đầy đủ.</p>
         <div class="hero-cta">
+            <?php // CTA chính của hero — đổi text theo trạng thái đăng nhập. ?>
             <?php if ($isLoggedIn): ?>
                 <a class="btn btn-primary" href="dashboard.php">Mở dashboard</a>
             <?php else: ?>
@@ -529,13 +565,18 @@ $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100,
                 <h3>Phân bổ trạng thái đơn hàng</h3>
                 <p class="panel-sub">Tỷ lệ đơn theo trạng thái trên tổng <?php echo number_value($totalOrders); ?> đơn.</p>
 
-                <?php if ($totalOrders > 0): ?>
+                <?php
+                // Có ít nhất 1 đơn → vẽ 3 progress bar (HT / Đang giao / Đã hủy).
+                // Mỗi bar dùng width inline = %, tô màu khác nhau bằng class fill-*.
+                if ($totalOrders > 0):
+                ?>
                     <div class="progress-row">
                         <div class="progress-label">
                             <span>Hoàn thành</span>
                             <span class="success"><?php echo number_value($completedOrders); ?> · <?php echo percent_value($completedRate); ?></span>
                         </div>
                         <div class="progress-bar">
+                            <?php // width: % tỷ lệ hoàn thành, ví dụ "55.5%". ?>
                             <div class="progress-fill fill-green" style="width: <?php echo $completedRate; ?>%"></div>
                         </div>
                     </div>
@@ -579,7 +620,11 @@ $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100,
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($topSuppliers as $i => $sup): ?>
+                            <?php
+                            // foreach kèm $i => $sup: $i là index 0-based,
+                            // ta cộng 1 để in số thứ tự dễ đọc cho user (1, 2, 3,...).
+                            foreach ($topSuppliers as $i => $sup):
+                            ?>
                                 <tr>
                                     <td><?php echo $i + 1; ?></td>
                                     <td><strong><?php echo e($sup["supplier_name"]); ?></strong></td>
@@ -612,7 +657,11 @@ $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100,
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($popularMaterials as $i => $mat): ?>
+                            <?php
+                            // Liệt kê 5 vật tư đặt nhiều nhất theo tổng số lượng.
+                            // ĐVT: "kg", "cái", "thùng",... lấy từ cột m.unit.
+                            foreach ($popularMaterials as $i => $mat):
+                            ?>
                                 <tr>
                                     <td><?php echo $i + 1; ?></td>
                                     <td><strong><?php echo e($mat["material_name"]); ?></strong></td>
@@ -653,6 +702,7 @@ $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100,
             </article>
         </section>
 
+        <?php // Banner CTA chỉ hiện cho khách chưa đăng nhập — vừa quảng cáo, vừa nhắc đăng nhập. ?>
         <?php if (!$isLoggedIn): ?>
             <section class="cta-banner">
                 <div>
@@ -665,6 +715,7 @@ $cancelledRate = $totalOrders > 0 ? round($cancelledOrders / $totalOrders * 100,
     </main>
 
     <footer>
+        <?php // date("Y") in năm hiện tại (4 chữ số) — copyright tự cập nhật theo năm. ?>
         &copy; <?php echo date("Y"); ?> Trang quản lý nhà cung cấp công khai.
     </footer>
 </body>

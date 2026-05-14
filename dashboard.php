@@ -1,4 +1,12 @@
 <?php
+// ============================================================================
+// dashboard.php - Trang tổng quan dành cho admin sau khi đăng nhập.
+// Hiển thị các chỉ số chính: số NCC, số đơn các loại, doanh thu, nhà cung cấp
+// tốt nhất, đơn trễ hạn, đơn đang giao và đơn vừa hoàn thành.
+//
+// Toàn bộ dữ liệu được lấy từ 7 câu SELECT thống kê chạy 1 lần khi load trang.
+// ============================================================================
+
 session_start();
 
 require_once __DIR__ . "/connect.php";
@@ -8,6 +16,9 @@ require_once __DIR__ . "/helpers.php";
 restore_remembered_login($conn);
 require_login();
 
+// ---- Query 1: Thống kê nhà cung cấp ----
+// SUM(CASE WHEN ... THEN 1 ELSE 0 END) là pattern đếm có điều kiện —
+// tương đương COUNT(*) FILTER (WHERE ...) ở Postgres.
 $supplierStats = fetch_one($conn, "
     SELECT
         COUNT(*) AS total_suppliers,
@@ -16,6 +27,9 @@ $supplierStats = fetch_one($conn, "
     FROM suppliers
 ");
 
+// ---- Query 2: Thống kê tổng quan đơn hàng ----
+// late_orders = Pending VÀ đã quá hạn giao dự kiến.
+// COALESCE(SUM(...), 0): nếu bảng rỗng SUM trả NULL → coalesce thành 0.
 $orderStats = fetch_one($conn, "
     SELECT
         COUNT(*) AS total_orders,
@@ -27,6 +41,9 @@ $orderStats = fetch_one($conn, "
     FROM purchase_orders
 ");
 
+// ---- Query 3: Thống kê hoàn thành theo Ngày / Tháng / Năm ----
+// Dùng COALESCE(actual_date, order_date): nếu chưa có ngày giao thực tế thì
+// fallback về order_date — đảm bảo luôn có ngày để so sánh.
 $completionStats = fetch_one($conn, "
     SELECT
         SUM(CASE WHEN order_status = 'Completed' AND DATE(COALESCE(actual_date, order_date)) = CURDATE() THEN 1 ELSE 0 END) AS completed_today,
@@ -38,6 +55,17 @@ $completionStats = fetch_one($conn, "
     FROM purchase_orders
 ");
 
+// ---- Query 4: Nhà cung cấp tốt nhất (1 dòng duy nhất) ----
+// LEFT JOIN: bao gồm cả NCC chưa có đơn nào (sẽ có 0 đơn) → ranking công bằng.
+// on_time_rate được tính bằng:
+//   (số đơn Completed đúng hạn) / (tổng số đơn Completed) * 100
+// Bọc trong CASE để tránh chia cho 0 (NCC chưa có đơn Completed nào).
+// ORDER BY có 5 tiêu chí từ ưu tiên cao xuống thấp:
+//   1) Nhiều đơn hoàn thành nhất
+//   2) Tỷ lệ đúng hạn cao
+//   3) Doanh thu cao
+//   4) Ít đơn pending trễ
+//   5) Tổng số đơn nhiều
 $bestSupplier = fetch_one($conn, "
     SELECT
         s.supplier_id,
@@ -65,6 +93,8 @@ $bestSupplier = fetch_one($conn, "
     LIMIT 1
 ");
 
+// ---- Query 5: Bảng xếp hạng nhà cung cấp (top 8) ----
+// Tương tự bestSupplier nhưng lấy nhiều dòng và KHÔNG filter status='Active'.
 $supplierRanking = fetch_all($conn, "
     SELECT
         s.supplier_id,
@@ -89,6 +119,8 @@ $supplierRanking = fetch_all($conn, "
     LIMIT 8
 ");
 
+// ---- Query 6: Đơn trễ hạn (top 6, theo hạn lâu nhất trước) ----
+// Pending và expected_date < NOW() = đang trễ.
 $lateOrders = fetch_all($conn, "
     SELECT
         po.order_id,
@@ -103,6 +135,7 @@ $lateOrders = fetch_all($conn, "
     LIMIT 6
 ");
 
+// ---- Query 7: Đơn đang giao (top 8, sắp xếp theo hạn gần nhất) ----
 $pendingOrders = fetch_all($conn, "
     SELECT
         po.order_id,
@@ -117,6 +150,9 @@ $pendingOrders = fetch_all($conn, "
     LIMIT 8
 ");
 
+// ---- Query 8: Đơn hoàn thành gần đây (top 8, mới nhất trước) ----
+// COALESCE(actual_date, order_date): nếu chưa có actual_date thì dùng
+// order_date — bảo đảm sort không lỗi vì NULL.
 $recentCompletedOrders = fetch_all($conn, "
     SELECT
         po.order_id,
@@ -132,7 +168,9 @@ $recentCompletedOrders = fetch_all($conn, "
     LIMIT 8
 ");
 
+// Biến cho view bên dưới.
 $pageTitle = "Dashboard";
+// Báo sidebar highlight tab "Tổng quan".
 $active = "dashboard";
 ?>
 <!DOCTYPE html>
@@ -156,12 +194,15 @@ $active = "dashboard";
                     <h1>Dashboard nhà cung cấp</h1>
                     <p>Theo dõi nhà cung cấp tốt nhất, đơn đang giao, đơn trễ hạn và đơn đã hoàn thành.</p>
                 </div>
+                <?php // In ngày hiện tại theo định dạng dd/mm/yyyy ở góc phải. ?>
                 <div class="date-pill"><?php echo date("d/m/Y"); ?></div>
             </section>
 
+            <?php // 4 thẻ KPI ở đầu trang: số NCC / đơn pending / đơn trễ / doanh thu. ?>
             <section class="stats-grid">
                 <article class="stat-card">
                     <div class="label">Nhà cung cấp</div>
+                    <?php // ?? 0 phòng trường hợp query lỗi trả về [] → tránh warning. ?>
                     <div class="value"><?php echo number_value($supplierStats["total_suppliers"] ?? 0); ?></div>
                     <div class="hint">
                         <span class="success"><?php echo number_value($supplierStats["active_suppliers"] ?? 0); ?> đang hoạt động</span>
@@ -195,10 +236,15 @@ $active = "dashboard";
                         <span class="badge green">Best supplier</span>
                     </div>
 
-                    <?php if (!empty($bestSupplier) && (int) ($bestSupplier["supplier_id"] ?? 0) > 0): ?>
+                    <?php
+                    // Nếu DB chưa có NCC nào hoặc tất cả Inactive thì $bestSupplier có thể
+                    // là [] hoặc supplier_id rỗng → hiện empty-state thay vì box rỗng.
+                    if (!empty($bestSupplier) && (int) ($bestSupplier["supplier_id"] ?? 0) > 0):
+                    ?>
                         <div>
                             <div class="best-name"><?php echo e($bestSupplier["supplier_name"]); ?></div>
                             <div class="best-meta">
+                                <?php // ?: fallback nếu DB không có email/phone (NULL hoặc rỗng). ?>
                                 <span>Email: <?php echo e($bestSupplier["contact_email"] ?: "Chưa cập nhật"); ?></span>
                                 <span>Điện thoại: <?php echo e($bestSupplier["phone_number"] ?: "Chưa cập nhật"); ?></span>
                             </div>
@@ -261,6 +307,7 @@ $active = "dashboard";
                         <span class="badge red"><?php echo number_value(count($lateOrders)); ?> đơn</span>
                     </div>
 
+                    <?php // Có ít nhất 1 đơn trễ → hiện bảng; ngược lại hiện empty-state. ?>
                     <?php if (count($lateOrders) > 0): ?>
                         <div class="table-wrap">
                             <table class="table">
@@ -274,6 +321,7 @@ $active = "dashboard";
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    <?php // Lặp render từng đơn trễ thành 1 hàng. ?>
                                     <?php foreach ($lateOrders as $order): ?>
                                         <tr>
                                             <td>#<?php echo (int) $order["order_id"]; ?></td>
@@ -360,8 +408,12 @@ $active = "dashboard";
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($pendingOrders as $order): ?>
-                                        <?php $isLate = strtotime($order["expected_date"]) < time(); ?>
+                                    <?php
+                                    // Mỗi đơn pending: tính riêng "isLate" để badge tô màu đỏ
+                                    // nếu đơn đã quá hạn (so sánh timestamp với time() hiện tại).
+                                    foreach ($pendingOrders as $order):
+                                        $isLate = strtotime($order["expected_date"]) < time();
+                                    ?>
                                         <tr>
                                             <td>#<?php echo (int) $order["order_id"]; ?></td>
                                             <td><?php echo e($order["supplier_name"]); ?></td>
@@ -405,11 +457,15 @@ $active = "dashboard";
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($recentCompletedOrders as $order): ?>
-                                        <?php
+                                    <?php
+                                    // Mỗi đơn đã hoàn thành: xác định "đúng hạn" hay "trễ hạn".
+                                    // $actual: ngày hoàn thành thực tế; nếu DB chưa có actual_date
+                                    //   → tạm dùng order_date làm fallback.
+                                    // $isOnTime: true nếu hoàn thành ≤ ngày dự kiến.
+                                    foreach ($recentCompletedOrders as $order):
                                         $actual = $order["actual_date"] ?: $order["order_date"];
                                         $isOnTime = strtotime($actual) <= strtotime($order["expected_date"]);
-                                        ?>
+                                    ?>
                                         <tr>
                                             <td>#<?php echo (int) $order["order_id"]; ?></td>
                                             <td><?php echo e($order["supplier_name"]); ?></td>

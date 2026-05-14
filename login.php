@@ -1,49 +1,90 @@
 <?php
+// ============================================================================
+// login.php - Trang đăng nhập. Xử lý 2 luồng:
+//   1. GET: hiển thị form login (cùng ô "Ghi nhớ đăng nhập").
+//   2. POST: nhận username/password, kiểm tra với DB, đăng nhập thành công
+//      thì set session (+ remember cookie nếu được chọn) rồi chuyển hướng
+//      sang dashboard.
+// ============================================================================
+
+// Phải gọi session_start() TRƯỚC khi có bất kỳ output nào ra trình duyệt.
+// Nếu không, $_SESSION không hoạt động và header() sẽ báo lỗi
+// "headers already sent".
 session_start();
 
+// Nạp 3 file dùng chung: kết nối DB, auth, helpers.
 require_once __DIR__ . "/connect.php";
 require_once __DIR__ . "/auth.php";
 require_once __DIR__ . "/helpers.php";
 
+// Cố gắng đăng nhập tự động từ cookie remember-me (nếu có).
+// Nếu thành công, hàm này sẽ set $_SESSION["user_id"] luôn.
 restore_remembered_login($conn);
 
+// Nếu đã đăng nhập rồi (qua session hoặc remember cookie) thì không cần
+// xem form đăng nhập nữa — chuyển thẳng tới dashboard.
 if (isset($_SESSION["user_id"])) {
     header("Location: dashboard.php");
     exit();
 }
 
+// Khởi tạo các biến hiển thị form. Khi load lần đầu (GET) chúng đều rỗng.
+// Khi POST sai → giữ lại username và trạng thái checkbox remember để
+// user không phải gõ lại từ đầu.
 $error = "";
 $username = "";
 $remember = false;
 
+// Chỉ xử lý đăng nhập khi form được SUBMIT (REQUEST_METHOD = POST).
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    // trim() bỏ khoảng trắng 2 đầu để tránh user gõ thừa " admin " thành
+    // tên khác. Operator ?? "" để khỏi warning nếu key không tồn tại.
     $username = trim($_POST["username"] ?? "");
+
+    // Không trim password — vì có thể password thực sự có khoảng trắng đầu/cuối.
     $password = $_POST["password"] ?? "";
+
+    // isset() trả về true nếu checkbox được tick (HTML chỉ gửi key nếu tick).
     $remember = isset($_POST["remember"]);
 
+    // Validate: cả hai trường đều phải có giá trị.
     if ($username === "" || $password === "") {
         $error = "Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.";
     } else {
+        // Truy DB tìm user. Dùng prepared statement để chống SQL injection
+        // (nếu nối chuỗi trực tiếp, attacker gõ ' OR 1=1 -- là login được luôn).
         $stmt = $conn->prepare("SELECT admin_id AS id, username, password, full_name, role FROM users WHERE username = ? LIMIT 1");
+        // "s" = kiểu string; ? sẽ được thay an toàn bằng $username.
         $stmt->bind_param("s", $username);
         $stmt->execute();
         $result = $stmt->get_result();
         $user = $result->fetch_assoc();
         $stmt->close();
 
+        // Kiểm tra mật khẩu:
+        //   - password_verify(): so sánh với hash bcrypt (cách chuẩn, an toàn).
+        //   - hash_equals(): fallback so sánh trực tiếp string — chỉ để hỗ
+        //     trợ dữ liệu cũ trong DB chưa được hash. Trong project mới
+        //     hoàn toàn nên chỉ dùng password_verify.
         if ($user && (password_verify($password, $user["password"]) || hash_equals($user["password"], $password))) {
+            // Lưu session: từ đây user đã được coi là đăng nhập.
             login_user($user);
 
+            // Nếu user tick "Ghi nhớ", set cookie 30 ngày để tự đăng nhập lại;
+            // ngược lại, xóa cookie cũ (nếu trước đó có).
             if ($remember) {
                 set_remember_cookie($user);
             } else {
                 clear_remember_cookie();
             }
 
+            // Đăng nhập xong → vào trang quản trị.
             header("Location: dashboard.php");
             exit();
         }
 
+        // Sai user hoặc sai mật khẩu — KHÔNG nói rõ "sai user" hay "sai pass"
+        // để tránh attacker dò từng username có tồn tại trong hệ thống.
         $error = "Tên đăng nhập hoặc mật khẩu không đúng.";
     }
 }
@@ -227,7 +268,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <h1>Đăng nhập</h1>
             <p>Chào mừng bạn quay lại. Vui lòng nhập thông tin để tiếp tục.</p>
 
-            <?php if ($error !== ""): ?>
+            <?php
+            // Chỉ hiển thị box báo lỗi nếu có lỗi (sau khi POST validate fail).
+            // e() escape HTML để chặn XSS — đề phòng kẻ tấn công nhồi script
+            // vào ô username.
+            if ($error !== ""):
+            ?>
                 <div class="alert"><?php echo e($error); ?></div>
             <?php endif; ?>
 
@@ -239,6 +285,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         id="username"
                         name="username"
                         placeholder="Nhập tên đăng nhập"
+                        <?php // Giữ lại username user vừa gõ khi POST sai, để khỏi gõ lại. ?>
                         value="<?php echo e($username); ?>"
                         required
                     >
@@ -251,6 +298,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                 <div class="form-options">
                     <label class="remember">
+                        <?php // In thuộc tính "checked" nếu trước đó user đã tick, để khôi phục trạng thái sau POST. ?>
                         <input type="checkbox" name="remember" <?php echo $remember ? "checked" : ""; ?>>
                         Ghi nhớ đăng nhập
                     </label>
