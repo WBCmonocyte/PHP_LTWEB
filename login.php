@@ -3,6 +3,7 @@ session_start();
 
 require_once __DIR__ . "/connect.php";
 require_once __DIR__ . "/auth.php";
+require_once __DIR__ . "/helpers.php";
 
 restore_remembered_login($conn);
 
@@ -227,7 +228,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <p>Chào mừng bạn quay lại. Vui lòng nhập thông tin để tiếp tục.</p>
 
             <?php if ($error !== ""): ?>
-                <div class="alert"><?php echo htmlspecialchars($error, ENT_QUOTES, "UTF-8"); ?></div>
+                <div class="alert"><?php echo e($error); ?></div>
             <?php endif; ?>
 
             <form action="" method="post">
@@ -238,7 +239,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         id="username"
                         name="username"
                         placeholder="Nhập tên đăng nhập"
-                        value="<?php echo htmlspecialchars($username, ENT_QUOTES, "UTF-8"); ?>"
+                        value="<?php echo e($username); ?>"
                         required
                     >
                 </div>

@@ -65,7 +65,7 @@ if ($isEdit) {
         $form["items"][] = [
             "material_id" => (string) $row["material_id"],
             "quantity" => (string) $row["quantity"],
-            "unit_price" => rtrim(rtrim((string) $row["unit_price"], "0"), "."),
+            "unit_price" => format_decimal($row["unit_price"]),
         ];
     }
 }
@@ -352,7 +352,7 @@ $active = "orders";
                 </section>
 
                 <section class="panel">
-                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:8px;">
+                    <div class="panel-header">
                         <div>
                             <h2>Chi tiết vật tư</h2>
                             <p class="panel-sub">Thêm các dòng vật tư. Tổng tiền được tính tự động.</p>
@@ -385,7 +385,7 @@ $active = "orders";
                             <tbody id="itemsBody"></tbody>
                             <tfoot>
                                 <tr>
-                                    <td colspan="4" style="text-align:right">Tổng cộng:</td>
+                                    <td colspan="4" class="numeric">Tổng cộng:</td>
                                     <td class="numeric"><span class="grand-total" id="grandTotal">0 đ</span></td>
                                     <td></td>
                                 </tr>
@@ -394,7 +394,7 @@ $active = "orders";
                     </div>
                 </section>
 
-                <div class="actions" style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+                <div class="form-actions">
                     <a class="btn btn-outline" href="orders.php">Hủy</a>
                     <button class="btn btn-primary" type="submit">
                         <?php echo $isEdit ? "Cập nhật đơn" : "Tạo đơn hàng"; ?>

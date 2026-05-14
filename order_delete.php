@@ -31,19 +31,14 @@ if (!$existing) {
     redirect("orders.php");
 }
 
-$conn->begin_transaction();
+$stmt = $conn->prepare("DELETE FROM purchase_orders WHERE order_id = ?");
+$stmt->bind_param("i", $orderId);
 
-try {
-    $stmt = $conn->prepare("DELETE FROM purchase_orders WHERE order_id = ?");
-    $stmt->bind_param("i", $orderId);
-    $stmt->execute();
-    $stmt->close();
-
-    $conn->commit();
+if ($stmt->execute()) {
     flash_set("success", "Đã xóa đơn #" . $orderId . ".");
-} catch (Throwable $ex) {
-    $conn->rollback();
-    flash_set("error", "Xóa thất bại: " . $ex->getMessage());
+} else {
+    flash_set("error", "Xóa thất bại: " . $stmt->error);
 }
 
+$stmt->close();
 redirect("orders.php");

@@ -32,6 +32,13 @@ function number_value($value): string
     return number_format((float) $value, 0, ",", ".");
 }
 
+function format_decimal($value): string
+{
+    $str = number_format((float) $value, 4, ".", "");
+
+    return rtrim(rtrim($str, "0"), ".");
+}
+
 function percent_value($value): string
 {
     return number_format((float) $value, 1, ",", ".") . "%";
